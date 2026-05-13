@@ -95,6 +95,7 @@ dns-tunneling/
 │   ├── preprocess.py          # dataset loading + label normalisation
 │   ├── features.py            # 11 metadata features per query
 │   ├── train.py               # cross-validation, fit, persist models
+│   ├── predict.py             # score data with a pretrained .pkl (Scenario 2A)
 │   ├── evaluate.py            # metrics + figures
 │   └── generate_sample.py     # synthetic data for smoke tests
 ├── notebooks/
@@ -105,7 +106,7 @@ dns-tunneling/
 ├── data/
 │   ├── raw/                   # downloaded CSVs (gitignored)
 │   └── processed/             # engineered feature matrix
-├── models/                    # rf.pkl, xgb.pkl (gitignored)
+├── models/                    # rf.pkl, xgb.pkl (pretrained, shipped in repo)
 ├── reports/
 │   ├── figures/               # plots saved by evaluate.py
 │   ├── metrics.csv            # final metric table
@@ -117,33 +118,51 @@ dns-tunneling/
 
 ## Quick Start
 
-### Option 1 — Google Colab (zero setup)
+Two ways to run, two options each. Pick whichever fits your environment.
+
+### Scenario 1 — Google Colab (zero setup)
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/notebooks/colab_demo.ipynb)
 
-Click the badge, then **Runtime → Run all**. The notebook installs XGBoost, generates a synthetic dataset, trains both models, and renders every figure inline. To use a real CIC dataset, upload the CSV via the Files pane and point the `DATA_PATH` variable at it.
+Click the badge, then in section 3 of the notebook pick **one** option:
 
-### Option 2 — Run locally
+| Option | Time | What it does |
+|---|---|---|
+| **1A — Use pretrained models** *(fastest)* | ~10 s | Downloads `rf.pkl` and `xgb.pkl` from this repo, scores the held-out test split, shows metrics + plots. |
+| **1B — Train from scratch** | ~1 min | Fits Random Forest + XGBoost on the bundled CIC sample with 5-fold CV, then evaluates. |
+
+### Scenario 2 — Run locally
 
 ```powershell
-# 1. Clone and enter
-git clone https://github.com/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection.git dns-tunneling
-cd dns-tunneling
+git clone https://github.com/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection.git
+cd DNS_Tunneling_Detection
 
-# 2. Create a virtual environment
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-
-# 3. Install dependencies
+.venv\Scripts\Activate.ps1               # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-# 4. Smoke-test the pipeline with synthetic data
-python -m src.generate_sample
-python -m src.train --data data/raw/sample.csv
+Then pick **one** option:
+
+#### Option 2A — Use the pretrained models *(fastest)*
+
+```powershell
+python -m src.predict --model models/rf.pkl
+python -m src.predict --model models/xgb.pkl
+```
+
+`predict.py` loads the shipped `.pkl`, scores `data/sample/test_split.csv`, and prints accuracy / F1 / ROC-AUC. Pass `--data path/to/your.csv` to score a different CSV.
+
+#### Option 2B — Train from scratch
+
+```powershell
+python -m src.train --data data/sample/doh_sample.csv
 python -m src.evaluate
 ```
 
-On Linux / macOS replace `.venv\Scripts\Activate.ps1` with `source .venv/bin/activate`.
+`train.py` does 5-fold CV on Random Forest and XGBoost, saves new `.pkl` files into `models/`, then `evaluate.py` writes confusion-matrix, ROC, and feature-importance PNGs into `reports/figures/`.
+
+---
 
 ## Datasets
 

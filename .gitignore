@@ -1,7 +1,9 @@
 data/raw/
 data/processed/
-models/*.pkl
-models/*.joblib
+# Models: ignore everything in models/ except the shipped pretrained .pkls.
+models/*
+!models/rf.pkl
+!models/xgb.pkl
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
