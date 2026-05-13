@@ -13,6 +13,14 @@
   <img src="https://img.shields.io/badge/status-research-yellow.svg" alt="status">
 </p>
 
+<p align="center">
+  <a href="https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/notebooks/colab_demo.ipynb">
+    <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab">
+  </a>
+</p>
+
+> **Try it instantly — no install needed.** Click the *Open in Colab* badge above to run the full pipeline (data → features → training → metrics → plots) in your browser. The notebook is fully self-contained: every function is embedded, so you don't even need to clone the repo.
+
 ---
 
 ## Table of Contents
@@ -90,6 +98,7 @@ dns-tunneling/
 │   ├── evaluate.py            # metrics + figures
 │   └── generate_sample.py     # synthetic data for smoke tests
 ├── notebooks/
+│   ├── colab_demo.ipynb       # self-contained Colab notebook (one-click run)
 │   ├── 01_eda.ipynb           # class balance, length & entropy distributions
 │   ├── 02_feature_engineering.ipynb
 │   └── 03_modeling.ipynb      # end-to-end demo for the defense
@@ -108,9 +117,17 @@ dns-tunneling/
 
 ## Quick Start
 
+### Option 1 — Google Colab (zero setup)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/notebooks/colab_demo.ipynb)
+
+Click the badge, then **Runtime → Run all**. The notebook installs XGBoost, generates a synthetic dataset, trains both models, and renders every figure inline. To use a real CIC dataset, upload the CSV via the Files pane and point the `DATA_PATH` variable at it.
+
+### Option 2 — Run locally
+
 ```powershell
 # 1. Clone and enter
-git clone <repo-url> dns-tunneling
+git clone https://github.com/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection.git dns-tunneling
 cd dns-tunneling
 
 # 2. Create a virtual environment
@@ -183,9 +200,10 @@ The three notebooks are designed to be **run top-to-bottom** for the project def
 
 | Notebook | What it shows |
 |---|---|
-| `notebooks/01_eda.ipynb` | Class balance, query length distribution, entropy distribution, sample queries per class |
-| `notebooks/02_feature_engineering.ipynb` | Walks through every feature on benign vs tunneling examples, plots per-class distributions, correlation heatmap |
-| `notebooks/03_modeling.ipynb` | **Demo notebook** — full pipeline end-to-end: load → features → cross-validate → fit → confusion matrices → ROC → feature importance |
+| [`notebooks/colab_demo.ipynb`](notebooks/colab_demo.ipynb) | **Self-contained Colab notebook** — everything in one file, no clone required. Best entry point. [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/notebooks/colab_demo.ipynb) |
+| [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) | Class balance, query length distribution, entropy distribution, sample queries per class |
+| [`notebooks/02_feature_engineering.ipynb`](notebooks/02_feature_engineering.ipynb) | Walks through every feature on benign vs tunneling examples, plots per-class distributions, correlation heatmap |
+| [`notebooks/03_modeling.ipynb`](notebooks/03_modeling.ipynb) | **Demo notebook (local)** — full pipeline end-to-end: load → features → cross-validate → fit → confusion matrices → ROC → feature importance |
 
 ## Limitations
 
