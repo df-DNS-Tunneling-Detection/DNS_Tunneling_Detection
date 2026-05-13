@@ -171,6 +171,12 @@ def load_dataset(
     data = data[keep].reset_index(drop=True)
     labels = labels[keep].reset_index(drop=True)
 
+    # Median-impute NaNs in numeric features (CIC flow CSVs occasionally have
+    # missing ResponseTime values for flows with no response).
+    numeric_cols = data.select_dtypes(include="number").columns
+    if len(numeric_cols):
+        data[numeric_cols] = data[numeric_cols].fillna(data[numeric_cols].median(numeric_only=True))
+
     return data, labels
 
 
