@@ -1,0 +1,13 @@
+CIC Dataset_DNS Amplification
+------------------------------------------------
+First Day-Friday October 30th: Benign (till fyun.cn, 31,535 domains)
+11:am-11:00 am tomorrow
+-------------------------------------------------
+Second Day-Saturday October 31st-Training
+Benign: 11:30 am-13:00 pm (2610 domains, till iyunv .com)
+Attack: 13:06 pm-13:22 pm (8,089,228 packets) (10 million requests per 10 dns serevrs)
+--------------------------------------------------
+Third Day-Sunday November 1st-Testing
+Benign: 10:25 am-12:40 am (4391 domains)
+Attack: 12:44 am-12:59:22 (5,505,941)(10 million requests per 9 DNS servers)
+-------------------------------------------------

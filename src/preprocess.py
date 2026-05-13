@@ -66,6 +66,49 @@ def load_csv_files(paths: Iterable[Path]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def load_cic_bell_dns_2021(directory: str | Path) -> tuple[pd.DataFrame, pd.Series]:
+    """Loader for CIC-Bell-DNS-2021 (CSV_benign / CSV_malware / CSV_phishing / CSV_spam).
+
+    Labels are encoded in the filename, not in a column. `benign` -> 0; everything
+    else -> 1 (any malicious DNS).
+    """
+    directory = Path(directory)
+    frames = []
+    label_map = {
+        "csv_benign": 0,
+        "csv_malware": 1,
+        "csv_phishing": 1,
+        "csv_spam": 1,
+    }
+    for csv in sorted(directory.glob("CSV_*.csv")):
+        key = csv.stem.lower()
+        if key not in label_map:
+            continue
+        df = pd.read_csv(csv, low_memory=False)
+        df["label"] = label_map[key]
+        frames.append(df)
+    if not frames:
+        raise FileNotFoundError(f"No CSV_*.csv files found in {directory}.")
+    return _split_features_labels(pd.concat(frames, ignore_index=True))
+
+
+def _split_features_labels(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    """Internal helper: take a labeled DataFrame and return (features, labels)."""
+    labels = df["label"].astype(int)
+    df = df.drop(columns=["label"])
+    # Prefer raw `Domain` (or similar) text column if present.
+    query_col = _find_column(df, _QUERY_CANDIDATES)
+    if query_col is not None:
+        data = df[[query_col]].rename(columns={query_col: "query"}).fillna("")
+        data["query"] = data["query"].astype(str).str.replace(r"^b'|'$", "", regex=True)
+    else:
+        data = df.select_dtypes(include="number").copy()
+        if data.empty:
+            raise ValueError(f"No usable features. Columns: {list(df.columns)}")
+    keep = ~data.duplicated()
+    return data[keep].reset_index(drop=True), labels[keep].reset_index(drop=True)
+
+
 def load_dataset(
     path: str | Path,
     query_col: str | None = None,
@@ -91,6 +134,9 @@ def load_dataset(
     """
     path = Path(path)
     if path.is_dir():
+        # Auto-detect CIC-Bell-DNS-2021 layout (filename-encoded labels).
+        if any(path.glob("CSV_benign.csv")) and any(path.glob("CSV_*.csv")):
+            return load_cic_bell_dns_2021(path)
         files = sorted(path.glob("*.csv"))
         df = load_csv_files(files)
     else:
