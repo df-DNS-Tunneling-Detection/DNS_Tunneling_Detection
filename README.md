@@ -147,20 +147,35 @@ On Linux / macOS replace `.venv\Scripts\Activate.ps1` with `source .venv/bin/act
 
 ## Datasets
 
+### Bundled sample (10 000 rows, ~4.5 MB)
+
+A balanced, stratified sample from **CIRA-CIC-DoHBrw-2020** ships in this repo at [`data/sample/doh_sample.csv`](data/sample/doh_sample.csv). 5 000 benign + 5 000 malicious DoH flows, with all 33 flow-level features and the original `Label` column. Big enough to train and produce meaningful metrics; small enough for git.
+
+```powershell
+python -m src.train --data data/sample/doh_sample.csv
+python -m src.evaluate
+```
+
+### Full datasets (download separately)
+
 Both supported datasets are released by the **Canadian Institute for Cybersecurity** and require free registration to download.
 
 | Dataset | Description | Link |
 |---|---|---|
-| **CIRA-CIC-DoHBrw-2020** | DoH (DNS-over-HTTPS) traffic from regular browsers and from `dns2tcp`, `DNSCat2`, `Iodine`. Pre-extracted CSV features. | [link](https://www.unb.ca/cic/datasets/dohbrw-2020.html) |
-| **CIC-Bell-DNS-2021** | Plaintext DNS traffic, benign vs. malicious. PCAP + CSV. | [link](https://www.unb.ca/cic/datasets/dns-2021.html) |
+| **CIRA-CIC-DoHBrw-2020** | DoH (DNS-over-HTTPS) traffic from regular browsers and from `dns2tcp`, `DNSCat2`, `Iodine`. ~270 K flows after extraction. | [link](https://www.unb.ca/cic/datasets/dohbrw-2020.html) |
+| **CIC-Bell-DNS-2021** | DNS-based malicious domain classification (benign / malware / phishing / spam). | [link](https://www.unb.ca/cic/datasets/dns-2021.html) |
 
-Place the downloaded CSV files anywhere under `data/raw/`. The loader auto-detects the label and query columns; for the CIC pre-extracted features it falls back to the numeric feature columns directly.
+Place the downloaded CSV files under `data/raw/` — the directory is gitignored. The loader auto-detects the format:
 
 ```powershell
-python -m src.train --data data/raw/CIRA-CIC-DoHBrw-2020/
+# CIC-DoHBrw-2020 (uses Label column)
+python -m src.train --data data/raw/CICDoHBrw2020/
+
+# CIC-Bell-DNS-2021 (filename-encoded labels)
+python -m src.train --data data/raw/CICBellDNS2021/CSVs/
 ```
 
-If you cannot access the CIC datasets, `src/generate_sample.py` produces a synthetic stand-in (2 000 benign + 2 000 base32-style tunneling queries) so every step of the pipeline still runs.
+If you cannot access the CIC datasets, `src/generate_sample.py` produces a synthetic stand-in (2 000 benign + 2 000 base32-style tunneling queries).
 
 ## Feature Set
 
