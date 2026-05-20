@@ -34,7 +34,7 @@
 - [Feature Set](#feature-set)
 - [Reproducing the Results](#reproducing-the-results)
 - [Notebooks](#notebooks)
-- [DistilBERT Extension (LLM)](#distilbert-extension-llm)
+- [Deep Learning Extension (MLP)](#deep-learning-extension-mlp)
 - [Limitations](#limitations)
 - [References](#references)
 - [License](#license)
@@ -99,13 +99,10 @@ dns-tunneling/
 │   ├── predict.py             # score data with a pretrained .pkl (Scenario 2A)
 │   ├── evaluate.py            # metrics + figures
 │   └── generate_sample.py     # synthetic data for smoke tests
-├── llm/                       # DistilBERT fine-tuning pipeline
-│   ├── train.py               # fine-tune DistilBERT on raw queries
-│   ├── evaluate.py            # evaluate + compare with classical ML
-│   ├── predict.py             # inference on new queries
-│   ├── 04_distilbert_e2e.ipynb# end-to-end notebook for defense
-│   ├── requirements.txt       # LLM-specific dependencies
-│   └── README.md              # detailed LLM setup guide
+├── deep_learning/             # MLP deep learning pipeline
+│   ├── 04_mlp_e2e.ipynb       # end-to-end notebook for defense
+│   ├── requirements.txt       # deep learning dependencies
+│   └── README.md              # detailed MLP setup guide
 ├── notebooks/
 │   ├── colab_demo.ipynb       # self-contained Colab notebook (one-click run)
 │   ├── 01_eda.ipynb           # class balance, length & entropy distributions
@@ -246,62 +243,44 @@ The notebooks are designed to be **run top-to-bottom** for the project defense:
 | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) | Class balance, query length distribution, entropy distribution, sample queries per class |
 | [`notebooks/02_feature_engineering.ipynb`](notebooks/02_feature_engineering.ipynb) | Walks through every feature on benign vs tunneling examples, plots per-class distributions, correlation heatmap |
 | [`notebooks/03_modeling.ipynb`](notebooks/03_modeling.ipynb) | **Demo notebook (local)** — full pipeline end-to-end: load → features → cross-validate → fit → confusion matrices → ROC → feature importance |
-| [`llm/04_distilbert_e2e.ipynb`](llm/04_distilbert_e2e.ipynb) | **DistilBERT end-to-end** — tokenize → fine-tune → evaluate → compare with RF/XGBoost → ROC/PR curves → inference demo. [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/llm/04_distilbert_e2e.ipynb) |
+| [`deep_learning/04_mlp_e2e.ipynb`](deep_learning/04_mlp_e2e.ipynb) | **MLP end-to-end** — load data → train MLP + RF + XGBoost → evaluate → compare → ROC/PR curves → inference demo. [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/deep_learning/04_mlp_e2e.ipynb) |
 
-## DistilBERT Extension (LLM)
+## Deep Learning Extension (MLP)
 
-In addition to the classical ML pipeline (Random Forest + XGBoost on 11 hand-crafted features), this project includes a **DistilBERT fine-tuning pipeline** that learns directly from raw DNS query text — no feature engineering required.
+In addition to the classical ML pipeline (Random Forest + XGBoost on hand-crafted features), this project includes a **Multi-Layer Perceptron (MLP) deep learning pipeline** that trains a neural network on the same tabular flow features.
 
-### Why DistilBERT?
+### Why MLP?
 
-| Aspect | Classical ML (RF/XGBoost) | DistilBERT |
-|--------|--------------------------|------------|
-| Input | 11 hand-crafted features | Raw query text |
-| Feature engineering | Required | None |
-| Training time | Seconds | ~30-60 min (T4 GPU) |
-| Inference speed | 1000s/sec | ~100/sec |
-| Interpretability | High (feature importance) | Low (black box) |
-| Deployment | CPU-friendly | Needs GPU or optimization |
+| Aspect | Classical ML (RF/XGBoost) | MLP |
+|--------|--------------------------|-----|
+| Input | Hand-crafted flow features | Same flow features |
+| Feature engineering | Required | Same features used |
+| Model type | Tree ensemble | Neural network |
+| Interpretability | High (feature importance) | Medium (weight analysis) |
+| Deployment | CPU-friendly | CPU-friendly |
 
-### Quick Start — DistilBERT
+### Quick Start — MLP
 
-**Option A: Notebook (recommended for defense)**
+**Notebook (recommended for defense)**
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/llm/04_distilbert_e2e.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/deep_learning/04_mlp_e2e.ipynb)
 
-Click the badge to open the DistilBERT notebook directly in Colab. Then:
-1. Set **Runtime → T4 GPU**
-2. Update `DATA_PATH` to your dataset
-3. Click **Runtime → Run all**
+Click the badge to open the MLP notebook directly in Colab. Then:
+1. Click **Runtime → Run all**
 
-**Option B: Python scripts**
+The notebook trains an MLP alongside RF and XGBoost, evaluates all three, and produces comparison plots (ROC, PR, confusion matrices, metric bars).
 
-```powershell
-cd llm
-pip install -r requirements.txt
+### MLP Results
 
-# Train
-python train.py --data ../data/raw/your-dataset.csv --epochs 3 --batch-size 64
-
-# Evaluate and compare with classical ML
-python evaluate.py
-
-# Predict on new queries
-python predict.py "mail.google.com"
-```
-
-### DistilBERT Results
-
-Expected metrics on the full 270K CIC dataset:
+Expected metrics on the CIC dataset:
 
 | Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
 |-------|----------|-----------|--------|----|---------|
-| DistilBERT | ≥ 0.98 | ≥ 0.98 | ≥ 0.98 | ≥ 0.98 | ≥ 0.99 |
+| MLP | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.99 |
 | Random Forest | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.99 |
 | XGBoost | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.99 |
 
-Full setup guide: see [`llm/README.md`](llm/README.md)
-
+Full setup guide: see [`deep_learning/README.md`](deep_learning/README.md)
 ---
 
 ## Limitations
@@ -313,13 +292,12 @@ Full setup guide: see [`llm/README.md`](llm/README.md)
 - An attacker who **shapes payloads to mimic benign distributions** (e.g. Markov-generated subdomains trained on Alexa-Top-1M) is harder to flag.
 - The CIC datasets contain a small number of tunneling tools; generalisation to unseen tools is the right thing to measure for a follow-up.
 
-### DistilBERT (LLM)
+### MLP (Deep Learning)
 
-- **Overkill for clean data** — on the synthetic dataset, classical ML already scores 1.0. The LLM advantage shows on harder, real-world data.
-- **Black box** — unlike RF/XGBoost feature importance, it is hard to explain why DistilBERT flagged a specific query.
-- **Slower inference** — ~100 queries/sec vs 1000s/sec for classical models. Not suitable for inline deployment without optimization (ONNX, quantization).
-- **Requires GPU for training** — fine-tuning on 270K samples takes ~30-60 min on T4. CPU training is impractical.
-- **Same data vantage assumption** — still needs access to query text, not encrypted payloads.
+- **Same feature set** — uses the same hand-crafted features as classical ML, so it inherits the same feature-quality ceiling.
+- **Less interpretable** — unlike RF/XGBoost feature importance, MLP weights are harder to explain intuitively.
+- **Hyperparameter sensitive** — learning rate, hidden layer sizes, and regularization need tuning for best results.
+- **No GPU advantage on tabular data** — unlike NLP/vision, MLP on tabular features does not benefit significantly from GPU acceleration.
 
 ## References
 
