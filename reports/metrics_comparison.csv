@@ -1,0 +1,4 @@
+,accuracy,precision,recall,f1,roc_auc
+MLP,0.992,0.994,0.99,0.992,0.9994
+Random Forest,0.998,1.0,0.996,0.998,1.0
+XGBoost,0.999,1.0,0.998,0.999,1.0
