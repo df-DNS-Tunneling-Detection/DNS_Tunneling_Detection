@@ -246,7 +246,7 @@ The notebooks are designed to be **run top-to-bottom** for the project defense:
 | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) | Class balance, query length distribution, entropy distribution, sample queries per class |
 | [`notebooks/02_feature_engineering.ipynb`](notebooks/02_feature_engineering.ipynb) | Walks through every feature on benign vs tunneling examples, plots per-class distributions, correlation heatmap |
 | [`notebooks/03_modeling.ipynb`](notebooks/03_modeling.ipynb) | **Demo notebook (local)** — full pipeline end-to-end: load → features → cross-validate → fit → confusion matrices → ROC → feature importance |
-| [`llm/04_distilbert_e2e.ipynb`](llm/04_distilbert_e2e.ipynb) | **DistilBERT end-to-end** — tokenize → fine-tune → evaluate → compare with RF/XGBoost → ROC/PR curves → inference demo |
+| [`llm/04_distilbert_e2e.ipynb`](llm/04_distilbert_e2e.ipynb) | **DistilBERT end-to-end** — tokenize → fine-tune → evaluate → compare with RF/XGBoost → ROC/PR curves → inference demo. [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/llm/04_distilbert_e2e.ipynb) |
 
 ## DistilBERT Extension (LLM)
 
@@ -267,11 +267,12 @@ In addition to the classical ML pipeline (Random Forest + XGBoost on 11 hand-cra
 
 **Option A: Notebook (recommended for defense)**
 
-```powershell
-# Open in Colab with T4 GPU
-# Upload llm/04_distilbert_e2e.ipynb to Colab
-# Set DATA_PATH to your dataset and run all cells
-```
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/llm/04_distilbert_e2e.ipynb)
+
+Click the badge to open the DistilBERT notebook directly in Colab. Then:
+1. Set **Runtime → T4 GPU**
+2. Update `DATA_PATH` to your dataset
+3. Click **Runtime → Run all**
 
 **Option B: Python scripts**
 

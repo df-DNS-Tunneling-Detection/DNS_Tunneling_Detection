@@ -1,6 +1,10 @@
 # DistilBERT — DNS Tunneling Detection
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection/blob/main/llm/04_distilbert_e2e.ipynb)
+
 Fine-tunes `distilbert-base-uncased` on raw DNS query strings for binary classification: **benign vs tunneling**. No hand-crafted features needed — the model learns directly from raw text.
+
+Click the badge above to open the end-to-end notebook directly in Colab — no clone or install needed. Just enable T4 GPU and run all cells.
 
 ---
 
@@ -48,6 +52,9 @@ The notebook `04_distilbert_e2e.ipynb` runs the entire pipeline end-to-end in a 
 
 ### Step 1 — Open Colab
 
+Click the **Open in Colab** badge at the top of this README (or in the main project README). The notebook opens directly in Colab — no need to upload anything.
+
+Alternatively:
 1. Go to [colab.google.com](https://colab.google.com)
 2. Click **File → Upload notebook**
 3. Upload `llm/04_distilbert_e2e.ipynb`
