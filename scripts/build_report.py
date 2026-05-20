@@ -20,6 +20,9 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.table import WD_ALIGN_VERTICAL
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 from fpdf import FPDF
 
@@ -192,6 +195,94 @@ def render_runs_docx(paragraph, text: str):
             paragraph.add_run(content)
 
 
+_NUMERIC_RE = re.compile(r"^[\s\-+]?\$?\d[\d,]*(\.\d+)?\s*%?$")
+
+
+def _is_numeric_cell(text: str) -> bool:
+    stripped = _strip_inline(text).strip()
+    if not stripped:
+        return False
+    return bool(_NUMERIC_RE.match(stripped.replace(" ", "")))
+
+
+def _set_cell_shading(cell, hex_fill: str) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_fill)
+    tc_pr.append(shd)
+
+
+def _set_cell_margins(cell, top=80, bottom=80, left=120, right=120) -> None:
+    """Cell padding in twentieths of a point (1/20 pt). 80 ≈ 4pt, 120 ≈ 6pt."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_mar = OxmlElement("w:tcMar")
+    for side, val in (("top", top), ("bottom", bottom), ("left", left), ("right", right)):
+        node = OxmlElement(f"w:{side}")
+        node.set(qn("w:w"), str(val))
+        node.set(qn("w:type"), "dxa")
+        tc_mar.append(node)
+    tc_pr.append(tc_mar)
+
+
+def _set_table_borders(table, color="A6B0C0", size="6") -> None:
+    """Light, uniform borders around every cell. size is in eighths of a point."""
+    tbl = table._tbl
+    tbl_pr = tbl.find(qn("w:tblPr"))
+    if tbl_pr is None:
+        tbl_pr = OxmlElement("w:tblPr")
+        tbl.insert(0, tbl_pr)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        node = OxmlElement(f"w:{edge}")
+        node.set(qn("w:val"), "single")
+        node.set(qn("w:sz"), size)
+        node.set(qn("w:space"), "0")
+        node.set(qn("w:color"), color)
+        borders.append(node)
+    tbl_pr.append(borders)
+
+
+def _render_docx_table(doc, rows) -> None:
+    n_cols = max(len(r) for r in rows)
+    tbl = doc.add_table(rows=len(rows), cols=n_cols)
+    tbl.autofit = True
+
+    # Decide per-column alignment from the first body row's numeric-ness.
+    col_align = [WD_ALIGN_PARAGRAPH.LEFT] * n_cols
+    if len(rows) > 1:
+        for c_idx in range(n_cols):
+            sample = rows[1][c_idx] if c_idx < len(rows[1]) else ""
+            if _is_numeric_cell(sample):
+                col_align[c_idx] = WD_ALIGN_PARAGRAPH.RIGHT
+
+    for r_idx, row in enumerate(rows):
+        for c_idx in range(n_cols):
+            cell_text = row[c_idx] if c_idx < len(row) else ""
+            cell = tbl.cell(r_idx, c_idx)
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            cell.text = ""
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if r_idx == 0 else col_align[c_idx]
+            render_runs_docx(p, cell_text)
+
+            if r_idx == 0:
+                _set_cell_shading(cell, "1F3864")  # navy
+                for run in p.runs:
+                    run.bold = True
+                    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                    run.font.size = Pt(10.5)
+            else:
+                if r_idx % 2 == 0:
+                    _set_cell_shading(cell, "F2F4F8")  # zebra band
+                for run in p.runs:
+                    run.font.size = Pt(10.5)
+            _set_cell_margins(cell)
+
+    _set_table_borders(tbl, color="A6B0C0", size="6")
+
+
 def build_docx(blocks):
     doc = Document()
     # Tighten default font / margins
@@ -245,19 +336,7 @@ def build_docx(blocks):
         elif kind == "table":
             if not payload:
                 continue
-            n_cols = max(len(r) for r in payload)
-            tbl = doc.add_table(rows=len(payload), cols=n_cols)
-            tbl.style = "Light Grid Accent 1"
-            for r_idx, row in enumerate(payload):
-                for c_idx, cell_text in enumerate(row):
-                    cell = tbl.cell(r_idx, c_idx)
-                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                    cell.text = ""
-                    p = cell.paragraphs[0]
-                    render_runs_docx(p, cell_text)
-                    if r_idx == 0:
-                        for run in p.runs:
-                            run.bold = True
+            _render_docx_table(doc, payload)
             doc.add_paragraph()  # spacer after table
 
     doc.save(DOCX)
@@ -390,45 +469,108 @@ def _strip_inline(text: str) -> str:
     return "".join(parts)
 
 
+def _compute_col_widths(pdf, rows, n_cols, page_width):
+    """Allocate column widths in proportion to widest cell content, with floors."""
+    pdf.set_font("Arial", "", 10)
+    raw = [0.0] * n_cols
+    for row in rows:
+        for c_idx in range(n_cols):
+            cell = _strip_inline(row[c_idx]) if c_idx < len(row) else ""
+            for line in cell.splitlines() or [cell]:
+                w = pdf.get_string_width(line)
+                if w > raw[c_idx]:
+                    raw[c_idx] = w
+
+    pad = 4.0  # mm of horizontal padding per cell
+    raw = [w + pad for w in raw]
+    total = sum(raw) or 1.0
+    # Floor at 14mm so even tiny numeric columns are readable.
+    widths = [max(14.0, w * page_width / total) for w in raw]
+    # Re-normalize to exactly fill the page.
+    scale = page_width / sum(widths)
+    return [w * scale for w in widths]
+
+
 def render_table_pdf(pdf, rows):
     if not rows:
         return
     n_cols = max(len(r) for r in rows)
     page_width = pdf.w - pdf.l_margin - pdf.r_margin
-    col_width = page_width / n_cols
+    widths = _compute_col_widths(pdf, rows, n_cols, page_width)
+
+    # Per-column alignment based on the first body row.
+    col_align = ["L"] * n_cols
+    if len(rows) > 1:
+        for c_idx in range(n_cols):
+            sample = rows[1][c_idx] if c_idx < len(rows[1]) else ""
+            if _is_numeric_cell(sample):
+                col_align[c_idx] = "R"
+
     pdf.ln(2)
+    line_h = 5.4
+    v_pad = 1.6  # extra vertical padding inside a cell
 
     def measure(row, font_style):
         pdf.set_font("Arial", font_style, 10)
         max_lines = 1
-        for cell in row:
-            stripped = _strip_inline(cell)
-            lines = pdf.multi_cell(col_width, 5, stripped, split_only=True)
-            max_lines = max(max_lines, len(lines))
-        return max_lines * 5 + 2
+        for c_idx in range(n_cols):
+            cell = _strip_inline(row[c_idx]) if c_idx < len(row) else ""
+            # multi_cell wrap measurement
+            lines = pdf.multi_cell(widths[c_idx], line_h, cell, dry_run=True, output="LINES")
+            if len(lines) > max_lines:
+                max_lines = len(lines)
+        return max_lines * line_h + v_pad
 
     for r_idx, row in enumerate(rows):
         is_header = r_idx == 0
         style = "B" if is_header else ""
         h = measure(row, style)
-        # page break if needed
         if pdf.get_y() + h > pdf.h - pdf.b_margin:
             pdf.add_page()
-        y_start = pdf.get_y()
-        for c_idx in range(n_cols):
-            cell = row[c_idx] if c_idx < len(row) else ""
-            x_start = pdf.l_margin + c_idx * col_width
-            pdf.set_xy(x_start, y_start)
-            if is_header:
-                pdf.set_fill_color(225, 230, 240)
-                pdf.set_font("Arial", "B", 10)
-            else:
-                pdf.set_fill_color(252, 252, 254)
-                pdf.set_font("Arial", "", 10)
-            pdf.set_draw_color(200, 200, 210)
-            pdf.multi_cell(col_width, 5, _strip_inline(cell), border=1, fill=True)
-        pdf.set_xy(pdf.l_margin, y_start + h)
+            # Re-emit the header on the new page so the table stays readable.
+            if not is_header and rows:
+                hh = measure(rows[0], "B")
+                _draw_pdf_row(pdf, rows[0], widths, col_align, hh, line_h, v_pad,
+                              is_header=True)
+
+        _draw_pdf_row(pdf, row, widths, col_align, h, line_h, v_pad, is_header=is_header,
+                      zebra=(r_idx % 2 == 0 and not is_header))
     pdf.ln(4)
+
+
+def _draw_pdf_row(pdf, row, widths, col_align, h, line_h, v_pad, is_header=False, zebra=False):
+    n_cols = len(widths)
+    y_start = pdf.get_y()
+    for c_idx in range(n_cols):
+        cell = _strip_inline(row[c_idx]) if c_idx < len(row) else ""
+        x_start = pdf.l_margin + sum(widths[:c_idx])
+        if is_header:
+            pdf.set_fill_color(31, 56, 100)         # navy
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Arial", "B", 10)
+        else:
+            if zebra:
+                pdf.set_fill_color(242, 244, 248)   # very light gray
+            else:
+                pdf.set_fill_color(255, 255, 255)
+            pdf.set_text_color(20, 20, 20)
+            pdf.set_font("Arial", "", 10)
+        pdf.set_draw_color(166, 176, 192)
+        pdf.set_line_width(0.15)
+
+        align = "C" if is_header else col_align[c_idx]
+
+        # Draw the filled border first so the text sits cleanly inside.
+        pdf.rect(x_start, y_start, widths[c_idx], h, "DF")
+
+        # Wrap text inside the cell with a small inset so it doesn't touch the border.
+        inset_x = 1.2
+        inset_y = v_pad / 2
+        pdf.set_xy(x_start + inset_x, y_start + inset_y)
+        pdf.multi_cell(widths[c_idx] - 2 * inset_x, line_h, cell, border=0, align=align,
+                       fill=False)
+    pdf.set_xy(pdf.l_margin, y_start + h)
+    pdf.set_text_color(0, 0, 0)
 
 
 # ---------- Main ---------------------------------------------------------------

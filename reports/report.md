@@ -1,9 +1,21 @@
-# DNS Tunneling Detection — Project Report
+# DNS Tunneling Detection: Project Report
 
-**Author**: _your name_
-**Course**: _course name_
-**Date**: _submission date_
-**Repository**: <https://github.com/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection>
+| Field | Value |
+|---|---|
+| Submitted to | Dr. Hassan Ibrahim |
+| Course | Digital Forensics |
+| Date | 14 May 2026 |
+| Repository | <https://github.com/df-DNS-Tunneling-Detection/DNS_Tunneling_Detection> |
+
+## Project Team
+
+| # | Name |
+|:--:|---|
+| 1 | Momen Mohamed Sharkawi |
+| 2 | Omar Hassan Ibrahim |
+| 3 | Ahmed Yusri Abd Elmoneim |
+| 4 | Abd Elrahman Ahmed Fathy |
+| 5 | Marwan Ramdan |
 
 ---
 
