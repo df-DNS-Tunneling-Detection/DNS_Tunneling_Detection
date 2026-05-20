@@ -34,6 +34,7 @@
 - [Feature Set](#feature-set)
 - [Reproducing the Results](#reproducing-the-results)
 - [Notebooks](#notebooks)
+- [DistilBERT Extension (LLM)](#distilbert-extension-llm)
 - [Limitations](#limitations)
 - [References](#references)
 - [License](#license)
@@ -91,13 +92,20 @@ Figures saved by `evaluate.py` (in `reports/figures/`):
 
 ```
 dns-tunneling/
-├── src/                       # production code
+├── src/                       # production code (classical ML)
 │   ├── preprocess.py          # dataset loading + label normalisation
 │   ├── features.py            # 11 metadata features per query
 │   ├── train.py               # cross-validation, fit, persist models
 │   ├── predict.py             # score data with a pretrained .pkl (Scenario 2A)
 │   ├── evaluate.py            # metrics + figures
 │   └── generate_sample.py     # synthetic data for smoke tests
+├── llm/                       # DistilBERT fine-tuning pipeline
+│   ├── train.py               # fine-tune DistilBERT on raw queries
+│   ├── evaluate.py            # evaluate + compare with classical ML
+│   ├── predict.py             # inference on new queries
+│   ├── 04_distilbert_e2e.ipynb# end-to-end notebook for defense
+│   ├── requirements.txt       # LLM-specific dependencies
+│   └── README.md              # detailed LLM setup guide
 ├── notebooks/
 │   ├── colab_demo.ipynb       # self-contained Colab notebook (one-click run)
 │   ├── 01_eda.ipynb           # class balance, length & entropy distributions
@@ -230,7 +238,7 @@ The exact 80 / 20 train / test split is reproducible — `random_state=42` is fi
 
 ## Notebooks
 
-The three notebooks are designed to be **run top-to-bottom** for the project defense:
+The notebooks are designed to be **run top-to-bottom** for the project defense:
 
 | Notebook | What it shows |
 |---|---|
@@ -238,13 +246,79 @@ The three notebooks are designed to be **run top-to-bottom** for the project def
 | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) | Class balance, query length distribution, entropy distribution, sample queries per class |
 | [`notebooks/02_feature_engineering.ipynb`](notebooks/02_feature_engineering.ipynb) | Walks through every feature on benign vs tunneling examples, plots per-class distributions, correlation heatmap |
 | [`notebooks/03_modeling.ipynb`](notebooks/03_modeling.ipynb) | **Demo notebook (local)** — full pipeline end-to-end: load → features → cross-validate → fit → confusion matrices → ROC → feature importance |
+| [`llm/04_distilbert_e2e.ipynb`](llm/04_distilbert_e2e.ipynb) | **DistilBERT end-to-end** — tokenize → fine-tune → evaluate → compare with RF/XGBoost → ROC/PR curves → inference demo |
+
+## DistilBERT Extension (LLM)
+
+In addition to the classical ML pipeline (Random Forest + XGBoost on 11 hand-crafted features), this project includes a **DistilBERT fine-tuning pipeline** that learns directly from raw DNS query text — no feature engineering required.
+
+### Why DistilBERT?
+
+| Aspect | Classical ML (RF/XGBoost) | DistilBERT |
+|--------|--------------------------|------------|
+| Input | 11 hand-crafted features | Raw query text |
+| Feature engineering | Required | None |
+| Training time | Seconds | ~30-60 min (T4 GPU) |
+| Inference speed | 1000s/sec | ~100/sec |
+| Interpretability | High (feature importance) | Low (black box) |
+| Deployment | CPU-friendly | Needs GPU or optimization |
+
+### Quick Start — DistilBERT
+
+**Option A: Notebook (recommended for defense)**
+
+```powershell
+# Open in Colab with T4 GPU
+# Upload llm/04_distilbert_e2e.ipynb to Colab
+# Set DATA_PATH to your dataset and run all cells
+```
+
+**Option B: Python scripts**
+
+```powershell
+cd llm
+pip install -r requirements.txt
+
+# Train
+python train.py --data ../data/raw/your-dataset.csv --epochs 3 --batch-size 64
+
+# Evaluate and compare with classical ML
+python evaluate.py
+
+# Predict on new queries
+python predict.py "mail.google.com"
+```
+
+### DistilBERT Results
+
+Expected metrics on the full 270K CIC dataset:
+
+| Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
+|-------|----------|-----------|--------|----|---------|
+| DistilBERT | ≥ 0.98 | ≥ 0.98 | ≥ 0.98 | ≥ 0.98 | ≥ 0.99 |
+| Random Forest | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.99 |
+| XGBoost | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.97 | ≥ 0.99 |
+
+Full setup guide: see [`llm/README.md`](llm/README.md)
+
+---
 
 ## Limitations
+
+### Classical ML (RF / XGBoost)
 
 - We use **only single-query metadata**. Flow-level features (rate, periodicity, fan-out) would catch slower / stealthier tunnels.
 - We assume a vantage point with access to **query text** (resolver logs, on-host telemetry, or unencrypted DNS). For DoH the network observer needs TLS interception or endpoint visibility.
 - An attacker who **shapes payloads to mimic benign distributions** (e.g. Markov-generated subdomains trained on Alexa-Top-1M) is harder to flag.
 - The CIC datasets contain a small number of tunneling tools; generalisation to unseen tools is the right thing to measure for a follow-up.
+
+### DistilBERT (LLM)
+
+- **Overkill for clean data** — on the synthetic dataset, classical ML already scores 1.0. The LLM advantage shows on harder, real-world data.
+- **Black box** — unlike RF/XGBoost feature importance, it is hard to explain why DistilBERT flagged a specific query.
+- **Slower inference** — ~100 queries/sec vs 1000s/sec for classical models. Not suitable for inline deployment without optimization (ONNX, quantization).
+- **Requires GPU for training** — fine-tuning on 270K samples takes ~30-60 min on T4. CPU training is impractical.
+- **Same data vantage assumption** — still needs access to query text, not encrypted payloads.
 
 ## References
 
