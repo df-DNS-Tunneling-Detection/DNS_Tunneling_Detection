@@ -282,14 +282,6 @@ def _render_docx_table(doc, rows) -> None:
     tbl = doc.add_table(rows=len(rows), cols=n_cols)
     tbl.autofit = True
 
-    # Decide per-column alignment from the first body row's numeric-ness.
-    col_align = [WD_ALIGN_PARAGRAPH.LEFT] * n_cols
-    if len(rows) > 1:
-        for c_idx in range(n_cols):
-            sample = rows[1][c_idx] if c_idx < len(rows[1]) else ""
-            if _is_numeric_cell(sample):
-                col_align[c_idx] = WD_ALIGN_PARAGRAPH.RIGHT
-
     for r_idx, row in enumerate(rows):
         for c_idx in range(n_cols):
             cell_text = row[c_idx] if c_idx < len(row) else ""
@@ -297,7 +289,7 @@ def _render_docx_table(doc, rows) -> None:
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
             cell.text = ""
             p = cell.paragraphs[0]
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if r_idx == 0 else col_align[c_idx]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             render_runs_docx(p, cell_text)
 
             if r_idx == 0:
@@ -462,6 +454,16 @@ def _build_docx_cover(doc, info: dict) -> None:
 # ---------- PDF cover page ---------------------------------------------------
 
 def _render_pdf_cover(pdf, info: dict) -> None:
+    saved_apb = pdf.auto_page_break
+    saved_margin = pdf.b_margin
+    pdf.set_auto_page_break(False)
+    try:
+        _render_pdf_cover_impl(pdf, info)
+    finally:
+        pdf.set_auto_page_break(saved_apb, margin=saved_margin)
+
+
+def _render_pdf_cover_impl(pdf, info: dict) -> None:
     page_w = pdf.w
     page_h = pdf.h
     margin = pdf.l_margin
@@ -590,14 +592,17 @@ def build_docx(cover_blocks, body_blocks):
             _style_heading_color(p, PALETTE["h3_rgb"])
         elif kind == "p":
             p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             render_runs_docx(p, payload)
         elif kind == "ul":
             for item in payload:
                 p = doc.add_paragraph(style="List Bullet")
+                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 render_runs_docx(p, item)
         elif kind == "ol":
             for item in payload:
                 p = doc.add_paragraph(style="List Number")
+                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 render_runs_docx(p, item)
         elif kind == "quote":
             p = doc.add_paragraph(style="Intense Quote")
@@ -667,6 +672,106 @@ class ReportPDF(FPDF):
         self.write(5.2, text)
 
 
+# ---------- Justified inline writer ------------------------------------------
+# Word-wrapped paragraph renderer that keeps **bold**, *italic*, `code`, and
+# [link](url) formatting while distributing extra space across word gaps so
+# each non-final line is fully justified.
+
+def _font_for(kind: str):
+    if kind in ("bold", "link"):
+        return ("Arial", "B", 11)
+    if kind == "italic":
+        return ("Arial", "I", 11)
+    if kind == "code":
+        return ("Mono", "", 10)
+    return ("Arial", "", 11)
+
+
+def _color_for(kind: str):
+    if kind == "bold":
+        return PALETTE["h1_rgb"]
+    if kind == "code":
+        return (180, 83, 9)  # amber
+    if kind == "link":
+        return PALETTE["link_rgb"]
+    return (0, 0, 0)
+
+
+def _tokenize_atoms(text: str):
+    """Break text into (kind, word_or_space) atoms preserving inline style."""
+    atoms = []
+    for kind, content in inline_tokens(text):
+        if kind == "link":
+            content = content[0]
+        for part in re.split(r"(\s+)", content):
+            if part == "":
+                continue
+            atoms.append((kind, part))
+    return atoms
+
+
+def write_justified(pdf, text: str, line_h: float = 5.4) -> None:
+    avail = pdf.w - pdf.l_margin - pdf.r_margin
+    atoms = _tokenize_atoms(text)
+    # Measure each atom.
+    measured = []
+    for kind, word in atoms:
+        fam, sty, sz = _font_for(kind)
+        pdf.set_font(fam, sty, sz)
+        w = pdf.get_string_width(word)
+        measured.append((kind, word, w, word.isspace()))
+
+    # Pack atoms into lines that fit within `avail`.
+    lines, cur, cur_w = [], [], 0.0
+    for atom in measured:
+        _, _, w, is_space = atom
+        if cur_w + w > avail and cur:
+            while cur and cur[-1][3]:
+                cur.pop()
+            lines.append(cur)
+            cur, cur_w = [], 0.0
+            if is_space:
+                continue
+        cur.append(atom)
+        cur_w += w
+    if cur:
+        while cur and cur[-1][3]:
+            cur.pop()
+        lines.append(cur)
+
+    # Render each line, justifying all but the last. Treat each line as atomic:
+    # if it doesn't fit on the current page, force a page break BEFORE writing
+    # the line, so the captured y can't go stale mid-line.
+    bottom_trigger = pdf.h - pdf.b_margin
+    for idx, line in enumerate(lines):
+        if pdf.get_y() + line_h > bottom_trigger:
+            pdf.add_page()
+
+        is_last = idx == len(lines) - 1
+        non_space_w = sum(w for _, _, w, sp in line if not sp)
+        n_spaces = sum(1 for _, _, _, sp in line if sp)
+        base_space_w = sum(w for _, _, w, sp in line if sp)
+        if is_last or n_spaces == 0:
+            extra_per_space = 0.0
+        else:
+            extra_per_space = (avail - non_space_w - base_space_w) / n_spaces
+
+        x = pdf.l_margin
+        y = pdf.get_y()
+        for kind, word, w, is_space in line:
+            fam, sty, sz = _font_for(kind)
+            pdf.set_font(fam, sty, sz)
+            pdf.set_text_color(*_color_for(kind))
+            if is_space:
+                x += w + extra_per_space
+            else:
+                pdf.set_xy(x, y)
+                pdf.cell(w + 0.1, line_h, word)
+                x += w
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_xy(pdf.l_margin, y + line_h)
+
+
 def render_pdf(cover_blocks, body_blocks):
     pdf = ReportPDF()
     pdf.add_page()
@@ -685,6 +790,15 @@ def render_pdf(cover_blocks, body_blocks):
             pdf.ln(2)
         elif kind == "h2":
             pdf.ln(3)
+            # Atomic-fit so the heading and its underline never land on
+            # different pages.
+            pdf.set_font("Arial", "B", 15)
+            avail_w = pdf.w - pdf.l_margin - pdf.r_margin
+            lines = pdf.multi_cell(avail_w, 8, payload,
+                                   dry_run=True, output="LINES")
+            needed = max(8, len(lines) * 8) + 6
+            if pdf.get_y() + needed > pdf.h - pdf.b_margin:
+                pdf.add_page()
             pdf.set_font("Arial", "B", 15)
             pdf.set_text_color(*PALETTE["h2_rgb"])
             pdf.multi_cell(0, 8, payload)
@@ -704,8 +818,8 @@ def render_pdf(cover_blocks, body_blocks):
             pdf.set_text_color(0, 0, 0)
             pdf.ln(0.5)
         elif kind == "p":
-            pdf.add_inline(payload)
-            pdf.ln(7)
+            write_justified(pdf, payload)
+            pdf.ln(2)
         elif kind == "ul":
             for item in payload:
                 pdf.set_font("Arial", "", 11)
@@ -806,13 +920,8 @@ def render_table_pdf(pdf, rows):
     page_width = pdf.w - pdf.l_margin - pdf.r_margin
     widths = _compute_col_widths(pdf, rows, n_cols, page_width)
 
-    # Per-column alignment based on the first body row.
-    col_align = ["L"] * n_cols
-    if len(rows) > 1:
-        for c_idx in range(n_cols):
-            sample = rows[1][c_idx] if c_idx < len(rows[1]) else ""
-            if _is_numeric_cell(sample):
-                col_align[c_idx] = "R"
+    # All cells centered in both header and body.
+    col_align = ["C"] * n_cols
 
     pdf.ln(2)
     line_h = 5.4
@@ -869,7 +978,7 @@ def _draw_pdf_row(pdf, row, widths, col_align, h, line_h, v_pad, is_header=False
         pdf.set_draw_color(r, g, b)
         pdf.set_line_width(0.2)
 
-        align = "C" if is_header else col_align[c_idx]
+        align = "C"
 
         # Draw the filled border first so the text sits cleanly inside.
         pdf.rect(x_start, y_start, widths[c_idx], h, "DF")
