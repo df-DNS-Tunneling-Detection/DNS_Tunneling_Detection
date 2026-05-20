@@ -20,7 +20,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.table import WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
@@ -36,6 +36,39 @@ ARIAL_BOLD = r"C:\Windows\Fonts\arialbd.ttf"
 ARIAL_IT = r"C:\Windows\Fonts\ariali.ttf"
 ARIAL_BI = r"C:\Windows\Fonts\arialbi.ttf"
 CONSOLAS = r"C:\Windows\Fonts\consola.ttf"
+
+
+# ---------- Palette -----------------------------------------------------------
+# Single source of truth for colors. Teal primary + amber accent + warm-gray text.
+
+PALETTE = {
+    # Headings
+    "h1_rgb":            (19, 78, 74),     # #134E4A dark teal
+    "h2_rgb":            (15, 118, 110),   # #0F766E teal
+    "h3_rgb":            (180, 83, 9),     # #B45309 amber
+    # Inline
+    "link_rgb":          (14, 116, 144),   # #0E7490 cyan
+    # Tables
+    "tbl_header_fill":   "0F766E",        # teal
+    "tbl_header_hex":    "0F766E",
+    "tbl_header_rgb":    (15, 118, 110),
+    "tbl_zebra_fill":    "ECFEFF",        # very pale cyan
+    "tbl_zebra_rgb":     (236, 254, 255),
+    "tbl_border_hex":    "5EEAD4",        # soft teal
+    "tbl_border_rgb":    (94, 234, 212),
+    # Misc
+    "quote_rgb":         (87, 83, 78),
+    "code_fill_rgb":     (252, 248, 234), # warm cream
+    "hr_rgb":            (180, 83, 9),    # amber rule
+    # Cover page
+    "cover_band_rgb":    (19, 78, 74),    # dark teal top band
+    "cover_band_b_rgb":  (180, 83, 9),    # amber bottom band
+    "cover_title_rgb":   (19, 78, 74),
+    "cover_subtitle_rgb":(15, 118, 110),
+    "cover_label_rgb":   (180, 83, 9),
+    "cover_value_rgb":   (40, 40, 40),
+    "cover_team_rgb":    (15, 118, 110),
+}
 
 
 # ---------- Markdown parsing ---------------------------------------------------
@@ -268,24 +301,266 @@ def _render_docx_table(doc, rows) -> None:
             render_runs_docx(p, cell_text)
 
             if r_idx == 0:
-                _set_cell_shading(cell, "1F3864")  # navy
+                _set_cell_shading(cell, PALETTE["tbl_header_hex"])
                 for run in p.runs:
                     run.bold = True
                     run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
                     run.font.size = Pt(10.5)
             else:
                 if r_idx % 2 == 0:
-                    _set_cell_shading(cell, "F2F4F8")  # zebra band
+                    _set_cell_shading(cell, PALETTE["tbl_zebra_fill"])
                 for run in p.runs:
                     run.font.size = Pt(10.5)
             _set_cell_margins(cell)
 
-    _set_table_borders(tbl, color="A6B0C0", size="6")
+    _set_table_borders(tbl, color=PALETTE["tbl_border_hex"], size="6")
 
 
-def build_docx(blocks):
+# ---------- Cover-page extraction --------------------------------------------
+
+def _split_cover(blocks):
+    """Split blocks into (cover_blocks, body_blocks) at the first hr after h1.
+
+    If the document does not begin with an h1, no cover is extracted.
+    """
+    if not blocks or blocks[0][0] != "h1":
+        return [], blocks
+    for i, (kind, _) in enumerate(blocks):
+        if i > 0 and kind == "hr":
+            return blocks[:i], blocks[i + 1 :]
+    return [], blocks
+
+
+def _extract_cover_info(cover_blocks) -> dict:
+    """Pull title, supervisor, course, date, repository, and team list out of
+    the cover blocks parsed from the markdown.
+    """
+    info = {
+        "title": "",
+        "subtitle": "Project Report",
+        "supervisor": "",
+        "course": "",
+        "date": "",
+        "repository": "",
+        "team": [],
+    }
+    label_map = {
+        "submitted to": "supervisor",
+        "course": "course",
+        "date": "date",
+        "repository": "repository",
+    }
+    for kind, payload in cover_blocks:
+        if kind == "h1":
+            info["title"] = payload
+        elif kind == "table":
+            rows = payload
+            if not rows:
+                continue
+            header_l = [_strip_inline(c).strip().lower() for c in rows[0]]
+            # First metadata table has columns Field | Value.
+            if header_l[:2] == ["field", "value"]:
+                for row in rows[1:]:
+                    if len(row) < 2:
+                        continue
+                    label = _strip_inline(row[0]).strip().lower()
+                    value = _strip_inline(row[1]).strip()
+                    if label in label_map:
+                        info[label_map[label]] = value
+            elif "name" in header_l:
+                name_col = header_l.index("name")
+                for row in rows[1:]:
+                    if len(row) > name_col:
+                        info["team"].append(_strip_inline(row[name_col]).strip())
+        elif kind == "ol":
+            # Numbered list fallback for team.
+            if not info["team"]:
+                info["team"] = [_strip_inline(s).strip() for s in payload]
+    return info
+
+
+# ---------- DOCX cover page --------------------------------------------------
+
+def _add_centered(doc, text, *, size=12, bold=False, italic=False,
+                  rgb=(0, 0, 0), space_after=4):
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after = Pt(space_after)
+    run = p.add_run(text)
+    run.font.name = "Arial"
+    run.font.size = Pt(size)
+    run.bold = bold
+    run.italic = italic
+    run.font.color.rgb = RGBColor(*rgb)
+    return p
+
+
+def _add_paragraph_shading(paragraph, hex_fill: str) -> None:
+    p_pr = paragraph._p.get_or_add_pPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_fill)
+    p_pr.append(shd)
+
+
+def _build_docx_cover(doc, info: dict) -> None:
+    # Top color band
+    band = doc.add_paragraph()
+    band.paragraph_format.space_before = Pt(0)
+    band.paragraph_format.space_after = Pt(24)
+    band.add_run(" " * 4).font.size = Pt(14)
+    _add_paragraph_shading(band, "134E4A")
+
+    # Vertical space, then big centered title
+    for _ in range(3):
+        doc.add_paragraph()
+    _add_centered(doc, info["title"], size=28, bold=True,
+                  rgb=PALETTE["cover_title_rgb"], space_after=6)
+
+    # Amber accent rule (a row of em-dashes, centered)
+    _add_centered(doc, "─" * 20, size=14,
+                  rgb=PALETTE["cover_band_b_rgb"], space_after=18)
+
+    # Subtitle / course
+    _add_centered(doc, info.get("course", ""), size=16, italic=True,
+                  rgb=PALETTE["cover_subtitle_rgb"], space_after=4)
+    _add_centered(doc, info["subtitle"], size=13, italic=True,
+                  rgb=PALETTE["cover_subtitle_rgb"], space_after=28)
+
+    # Supervisor block
+    _add_centered(doc, "Submitted to", size=11, bold=True,
+                  rgb=PALETTE["cover_label_rgb"], space_after=2)
+    _add_centered(doc, info.get("supervisor", ""), size=14, bold=True,
+                  rgb=PALETTE["cover_value_rgb"], space_after=18)
+
+    # Date
+    _add_centered(doc, "Date", size=11, bold=True,
+                  rgb=PALETTE["cover_label_rgb"], space_after=2)
+    _add_centered(doc, info.get("date", ""), size=13,
+                  rgb=PALETTE["cover_value_rgb"], space_after=28)
+
+    # Team
+    _add_centered(doc, "Project Team", size=14, bold=True,
+                  rgb=PALETTE["cover_team_rgb"], space_after=8)
+    for n, name in enumerate(info["team"], 1):
+        _add_centered(doc, f"{n}.   {name}", size=12,
+                      rgb=PALETTE["cover_value_rgb"], space_after=3)
+
+    # Bottom amber band
+    for _ in range(2):
+        doc.add_paragraph()
+    band = doc.add_paragraph()
+    band.add_run(" " * 4).font.size = Pt(10)
+    _add_paragraph_shading(band, "B45309")
+
+    # Page break to start body on a fresh page
+    p = doc.add_paragraph()
+    p.add_run().add_break(WD_BREAK.PAGE)
+
+
+# ---------- PDF cover page ---------------------------------------------------
+
+def _render_pdf_cover(pdf, info: dict) -> None:
+    page_w = pdf.w
+    page_h = pdf.h
+    margin = pdf.l_margin
+
+    # Top dark teal band
+    band_h = 22.0
+    r, g, b = PALETTE["cover_band_rgb"]
+    pdf.set_fill_color(r, g, b)
+    pdf.rect(0, 0, page_w, band_h, "F")
+
+    # Amber accent stripe just below
+    r, g, b = PALETTE["cover_band_b_rgb"]
+    pdf.set_fill_color(r, g, b)
+    pdf.rect(0, band_h, page_w, 3.0, "F")
+
+    # Title block, centered around 30% of page
+    y_title = 70.0
+    pdf.set_xy(margin, y_title)
+    pdf.set_font("Arial", "B", 26)
+    pdf.set_text_color(*PALETTE["cover_title_rgb"])
+    pdf.multi_cell(page_w - 2 * margin, 12, info["title"], align="C")
+
+    # Amber rule under title
+    y = pdf.get_y() + 4
+    r, g, b = PALETTE["cover_band_b_rgb"]
+    pdf.set_draw_color(r, g, b)
+    pdf.set_line_width(0.8)
+    cx = page_w / 2
+    pdf.line(cx - 30, y, cx + 30, y)
+    pdf.set_y(y + 8)
+
+    # Course + subtitle
+    pdf.set_font("Arial", "I", 15)
+    pdf.set_text_color(*PALETTE["cover_subtitle_rgb"])
+    pdf.cell(page_w - 2 * margin, 8, info.get("course", ""), align="C", ln=1)
+    pdf.set_font("Arial", "I", 12)
+    pdf.cell(page_w - 2 * margin, 7, info["subtitle"], align="C", ln=1)
+
+    # Spacer
+    pdf.ln(20)
+
+    # Supervisor
+    pdf.set_font("Arial", "B", 11)
+    pdf.set_text_color(*PALETTE["cover_label_rgb"])
+    pdf.cell(page_w - 2 * margin, 6, "Submitted to", align="C", ln=1)
+    pdf.set_font("Arial", "B", 14)
+    pdf.set_text_color(*PALETTE["cover_value_rgb"])
+    pdf.cell(page_w - 2 * margin, 8, info.get("supervisor", ""), align="C", ln=1)
+    pdf.ln(12)
+
+    # Date
+    pdf.set_font("Arial", "B", 11)
+    pdf.set_text_color(*PALETTE["cover_label_rgb"])
+    pdf.cell(page_w - 2 * margin, 6, "Date", align="C", ln=1)
+    pdf.set_font("Arial", "", 12)
+    pdf.set_text_color(*PALETTE["cover_value_rgb"])
+    pdf.cell(page_w - 2 * margin, 7, info.get("date", ""), align="C", ln=1)
+    pdf.ln(16)
+
+    # Team
+    pdf.set_font("Arial", "B", 14)
+    pdf.set_text_color(*PALETTE["cover_team_rgb"])
+    pdf.cell(page_w - 2 * margin, 8, "Project Team", align="C", ln=1)
+
+    # Decorative short rule under "Project Team"
+    y = pdf.get_y() + 2
+    r, g, b = PALETTE["cover_team_rgb"]
+    pdf.set_draw_color(r, g, b)
+    pdf.set_line_width(0.4)
+    pdf.line(cx - 18, y, cx + 18, y)
+    pdf.set_y(y + 6)
+
+    pdf.set_font("Arial", "", 12)
+    pdf.set_text_color(*PALETTE["cover_value_rgb"])
+    for n, name in enumerate(info["team"], 1):
+        pdf.cell(page_w - 2 * margin, 7, f"{n}.   {name}", align="C", ln=1)
+
+    # Bottom amber band
+    bottom_band_h = 14.0
+    r, g, b = PALETTE["cover_band_b_rgb"]
+    pdf.set_fill_color(r, g, b)
+    pdf.rect(0, page_h - bottom_band_h, page_w, bottom_band_h, "F")
+
+    # Repository URL inside the bottom band (small, white)
+    if info.get("repository"):
+        pdf.set_xy(margin, page_h - bottom_band_h + 4.2)
+        pdf.set_font("Arial", "B", 9)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(page_w - 2 * margin, 5, info["repository"], align="C", ln=1)
+    pdf.set_text_color(0, 0, 0)
+
+
+def _style_heading_color(paragraph, rgb_tuple) -> None:
+    for run in paragraph.runs:
+        run.font.color.rgb = RGBColor(*rgb_tuple)
+
+
+def build_docx(cover_blocks, body_blocks):
     doc = Document()
-    # Tighten default font / margins
     style = doc.styles["Normal"]
     style.font.name = "Arial"
     style.font.size = Pt(11)
@@ -296,16 +571,23 @@ def build_docx(blocks):
         section.left_margin = Inches(0.9)
         section.right_margin = Inches(0.9)
 
-    for kind, payload in blocks:
+    if cover_blocks:
+        info = _extract_cover_info(cover_blocks)
+        _build_docx_cover(doc, info)
+
+    for kind, payload in body_blocks:
         if kind == "h1":
             p = doc.add_heading(level=0)
             render_runs_docx(p, payload)
+            _style_heading_color(p, PALETTE["h1_rgb"])
         elif kind == "h2":
             p = doc.add_heading(level=1)
             render_runs_docx(p, payload)
+            _style_heading_color(p, PALETTE["h2_rgb"])
         elif kind == "h3":
             p = doc.add_heading(level=2)
             render_runs_docx(p, payload)
+            _style_heading_color(p, PALETTE["h3_rgb"])
         elif kind == "p":
             p = doc.add_paragraph()
             render_runs_docx(p, payload)
@@ -367,7 +649,7 @@ class ReportPDF(FPDF):
             if kind == "link":
                 content = content[0]
                 style = base_style
-                self.set_text_color(11, 87, 208)
+                self.set_text_color(*PALETTE["link_rgb"])
                 self._write_wrapped(content, "Arial", style, 11)
                 self.set_text_color(0, 0, 0)
             elif kind == "bold":
@@ -385,28 +667,39 @@ class ReportPDF(FPDF):
         self.write(5.2, text)
 
 
-def render_pdf(blocks):
+def render_pdf(cover_blocks, body_blocks):
     pdf = ReportPDF()
     pdf.add_page()
 
-    for kind, payload in blocks:
+    if cover_blocks:
+        info = _extract_cover_info(cover_blocks)
+        _render_pdf_cover(pdf, info)
+        pdf.add_page()
+
+    for kind, payload in body_blocks:
         if kind == "h1":
             pdf.set_font("Arial", "B", 22)
-            pdf.set_text_color(20, 30, 60)
+            pdf.set_text_color(*PALETTE["h1_rgb"])
             pdf.multi_cell(0, 11, payload)
             pdf.set_text_color(0, 0, 0)
             pdf.ln(2)
         elif kind == "h2":
             pdf.ln(3)
             pdf.set_font("Arial", "B", 15)
-            pdf.set_text_color(20, 30, 60)
+            pdf.set_text_color(*PALETTE["h2_rgb"])
             pdf.multi_cell(0, 8, payload)
+            # Decorative amber underline beneath each h2
+            y = pdf.get_y() + 0.5
+            r, g, b = PALETTE["cover_band_b_rgb"]
+            pdf.set_draw_color(r, g, b)
+            pdf.set_line_width(0.6)
+            pdf.line(pdf.l_margin, y, pdf.l_margin + 40, y)
             pdf.set_text_color(0, 0, 0)
-            pdf.ln(1)
+            pdf.ln(3)
         elif kind == "h3":
             pdf.ln(2)
             pdf.set_font("Arial", "B", 12)
-            pdf.set_text_color(40, 60, 100)
+            pdf.set_text_color(*PALETTE["h3_rgb"])
             pdf.multi_cell(0, 6, payload)
             pdf.set_text_color(0, 0, 0)
             pdf.ln(0.5)
@@ -417,7 +710,10 @@ def render_pdf(blocks):
             for item in payload:
                 pdf.set_font("Arial", "", 11)
                 pdf.cell(5, 5.2, "")
+                r, g, b = PALETTE["h3_rgb"]
+                pdf.set_text_color(r, g, b)
                 pdf.write(5.2, "•  ")
+                pdf.set_text_color(0, 0, 0)
                 pdf.add_inline(item)
                 pdf.ln(5.5)
             pdf.ln(2)
@@ -425,20 +721,30 @@ def render_pdf(blocks):
             for n, item in enumerate(payload, 1):
                 pdf.set_font("Arial", "", 11)
                 pdf.cell(5, 5.2, "")
+                r, g, b = PALETTE["h3_rgb"]
+                pdf.set_text_color(r, g, b)
                 pdf.write(5.2, f"{n}.  ")
+                pdf.set_text_color(0, 0, 0)
                 pdf.add_inline(item)
                 pdf.ln(5.5)
             pdf.ln(2)
         elif kind == "quote":
             pdf.set_font("Arial", "I", 11)
-            pdf.set_text_color(80, 80, 80)
+            pdf.set_text_color(*PALETTE["quote_rgb"])
             pdf.set_left_margin(25)
+            # Left teal bar before the quote
+            y0 = pdf.get_y()
+            r, g, b = PALETTE["h2_rgb"]
+            pdf.set_draw_color(r, g, b)
+            pdf.set_line_width(0.8)
+            pdf.line(22, y0, 22, y0 + 5)
             pdf.multi_cell(0, 5.5, payload)
             pdf.set_left_margin(20)
             pdf.set_text_color(0, 0, 0)
             pdf.ln(3)
         elif kind == "code":
-            pdf.set_fill_color(245, 245, 250)
+            r, g, b = PALETTE["code_fill_rgb"]
+            pdf.set_fill_color(r, g, b)
             pdf.set_font("Mono", "", 9)
             for code_line in payload.split("\n"):
                 pdf.cell(0, 4.5, code_line, ln=1, fill=True)
@@ -451,7 +757,9 @@ def render_pdf(blocks):
             pdf.ln(3)
         elif kind == "hr":
             y = pdf.get_y() + 2
-            pdf.set_draw_color(180, 180, 180)
+            r, g, b = PALETTE["hr_rgb"]
+            pdf.set_draw_color(r, g, b)
+            pdf.set_line_width(0.6)
             pdf.line(20, y, 190, y)
             pdf.ln(6)
         elif kind == "table":
@@ -545,18 +853,21 @@ def _draw_pdf_row(pdf, row, widths, col_align, h, line_h, v_pad, is_header=False
         cell = _strip_inline(row[c_idx]) if c_idx < len(row) else ""
         x_start = pdf.l_margin + sum(widths[:c_idx])
         if is_header:
-            pdf.set_fill_color(31, 56, 100)         # navy
+            r, g, b = PALETTE["tbl_header_rgb"]
+            pdf.set_fill_color(r, g, b)
             pdf.set_text_color(255, 255, 255)
             pdf.set_font("Arial", "B", 10)
         else:
             if zebra:
-                pdf.set_fill_color(242, 244, 248)   # very light gray
+                r, g, b = PALETTE["tbl_zebra_rgb"]
+                pdf.set_fill_color(r, g, b)
             else:
                 pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(20, 20, 20)
             pdf.set_font("Arial", "", 10)
-        pdf.set_draw_color(166, 176, 192)
-        pdf.set_line_width(0.15)
+        r, g, b = PALETTE["tbl_border_rgb"]
+        pdf.set_draw_color(r, g, b)
+        pdf.set_line_width(0.2)
 
         align = "C" if is_header else col_align[c_idx]
 
@@ -599,10 +910,12 @@ def main():
     md_text = MD.read_text(encoding="utf-8")
     md_text = normalize_emoji(md_text)
     blocks = list(parse(md_text))
-    print(f"Parsed {len(blocks)} blocks from {MD}")
+    cover_blocks, body_blocks = _split_cover(blocks)
+    print(f"Parsed {len(blocks)} blocks "
+          f"(cover={len(cover_blocks)}, body={len(body_blocks)}) from {MD}")
 
-    build_docx(blocks)
-    render_pdf(blocks)
+    build_docx(cover_blocks, body_blocks)
+    render_pdf(cover_blocks, body_blocks)
 
 
 if __name__ == "__main__":
