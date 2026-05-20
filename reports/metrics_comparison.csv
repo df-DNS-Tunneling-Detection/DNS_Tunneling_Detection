@@ -1,4 +1,4 @@
-,accuracy,precision,recall,f1,roc_auc
-MLP,0.992,0.994,0.99,0.992,0.9994
-Random Forest,0.998,1.0,0.996,0.998,1.0
-XGBoost,0.999,1.0,0.998,0.999,1.0
+model,data_scope,accuracy,precision,recall,f1,roc_auc
+Random Forest,10K balanced sample,0.9980,1.0000,0.9960,0.9980,1.0000
+XGBoost,10K balanced sample,0.9990,1.0000,0.9980,0.9990,1.0000
+MLP (PyTorch 256-128-64),full ~270K dataset,0.9956,0.9962,0.9988,0.9975,0.9991

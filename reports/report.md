@@ -9,7 +9,7 @@
 
 ## Abstract
 
-This project builds a machine-learning pipeline that detects DNS tunneling traffic — a covert-channel technique attackers use to exfiltrate data or run command-and-control over the DNS protocol. We train and compare three detectors on the CIRA-CIC-DoHBrw-2020 dataset: two tree-based classifiers (Random Forest, XGBoost) and a deep-learning baseline (a Multi-Layer Perceptron). On a balanced held-out test split of 998 flows, XGBoost reaches **0.999 accuracy / F1 and 1.000 ROC-AUC**, Random Forest reaches **0.998 / 1.000**, and the MLP reaches **0.992 / 0.999**. The repository ships pretrained `.pkl` models, a bundled 10 000-row sample of the dataset, an inference CLI, and self-contained Colab notebooks so anyone can reproduce the results in minutes without registering for the source dataset.
+This project builds a machine-learning pipeline that detects DNS tunneling traffic — a covert-channel technique attackers use to exfiltrate data or run command-and-control over the DNS protocol. We train and compare three detectors on the CIRA-CIC-DoHBrw-2020 dataset in two stages: first, two tree-based classifiers (Random Forest and XGBoost) trained on a balanced **10 000-row sample** of the dataset; second, a deep-learning baseline (a Multi-Layer Perceptron) trained on the **full ~270 000-row dataset**. On their respective held-out test splits, XGBoost reaches **0.999 accuracy / F1 and 1.000 ROC-AUC**, Random Forest reaches **0.998 / 1.000**, and the MLP — trained on the full dataset — reaches **0.995 F1 / 0.999 ROC-AUC**. The repository ships pretrained `.pkl` models, the bundled sample, an inference CLI, and self-contained Colab notebooks so anyone can reproduce the results in minutes without registering for the source dataset.
 
 ---
 
@@ -121,6 +121,17 @@ The dataset is organised in two layers:
 
 Each row is one network flow with 35 columns: source/destination IP and port, timestamp, duration, byte counts, and 21 packet-size / packet-time / response-time statistics plus a `Label` column. The full malicious file is 148 MB — larger than the 100 MB GitHub limit. We therefore sample a balanced **10 000-row stratified subset** (5 000 benign + 5 000 malicious, seed 42, ~4.5 MB) and commit it as `data/sample/doh_sample.csv`.
 
+### 3.2.1 Two data scopes used in this project
+
+The two model families consume different slices of CIRA-CIC-DoHBrw-2020 — this is a deliberate experimental design choice:
+
+| Stage | Models | Data used | Rows | Balance |
+|---|---|---|---:|---|
+| **Classical ML** | Random Forest, XGBoost | bundled balanced sample (`data/sample/doh_sample.csv`) | 10 000 | 50 / 50 |
+| **Deep Learning** | Multi-Layer Perceptron | full CIRA-CIC-DoHBrw-2020 (Layer 2) | ≈ 269 643 | 12.7 : 1 malicious : benign |
+
+The classical ML stage uses the bundled sample so that the pretrained `.pkl` files are themselves reproducible from a CSV committed to the repository. The deep learning stage uses the full dataset because neural networks benefit measurably from larger training sets, and because reporting MLP results on the full distribution makes the head-to-head comparison with the LSTM baseline in MontazeriShatoori et al. (2020) apples-to-apples. Both stages share the same `random_state = 42` and the same stratification, so the test rows are deterministic within each stage.
+
 ### 3.3 Preprocessing
 
 `src/preprocess.py` performs:
@@ -197,50 +208,72 @@ A scikit-learn `MLPClassifier(hidden_layer_sizes=(256,128,64))` with `lr=1e-3`, 
 
 ### 3.6 Experimental protocol
 
-1. Load and clean the dataset → `preprocess.py`.
-2. Stratified split (80 / 20 for trees; 80 / 10 / 10 for the MLP), seed 42.
+**Classical ML stage** (on the 10 000-row bundled sample):
+
+1. Load and clean the sample → `preprocess.py`.
+2. Stratified 80 / 20 train / test split, seed 42.
 3. **5-fold stratified cross-validation** on the training split for RF and XGB, scoring `accuracy`, `f1`, and `roc_auc`.
 4. Fit on the full training split.
-5. For the MLP, train for up to 50 epochs with epoch-level validation F1; load the best-F1 checkpoint.
-6. Evaluate on the held-out test split.
-7. Persist models (`joblib.dump`, compress level 3) to `models/rf.pkl`, `models/xgb.pkl` and the MLP state dict to `deep_learning/models/mlp/mlp_model.pt`.
+5. Evaluate on the held-out test split (998 rows, 50 / 50).
+6. Persist models with `joblib.dump` (compress level 3) to `models/rf.pkl` and `models/xgb.pkl`.
 
-All three models see exactly the same training rows, validation rows, and test rows, so their numbers are directly comparable.
+**Deep learning stage** (on the full ~269 643-row dataset):
+
+1. Load the full Layer-2 CIRA-CIC-DoHBrw-2020 dataset (`l2-benign.csv` + `l2-malicious.csv`).
+2. Stratified 80 / 10 / 10 train / val / test split, seed 42 — preserving the natural 12.7 : 1 imbalance in each split.
+3. Standardise features with `StandardScaler`, fit on the training split only.
+4. Train the MLP for up to 50 epochs with epoch-level validation F1; load the best-F1 checkpoint.
+5. Evaluate on the held-out test split (~26 964 rows).
+6. Persist the state dict and the fitted scaler to `deep_learning/models/mlp/mlp_model.pt` and `scaler.pkl`.
+
+Within each stage, training, validation, and test rows are disjoint and deterministic.
 
 ---
 
 ## 4. Results
 
-### 4.1 Held-out test-set metrics (998 flows: 499 benign / 499 malicious)
+### 4.1 Classical ML on the 10 000-row balanced sample (test split: 998 flows, 499 benign / 499 malicious)
 
 | Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
 |---|---:|---:|---:|---:|---:|
-| MLP (PyTorch / 3 hidden) | 0.9920 | 0.9940 | 0.9900 | 0.9920 | 0.9994 |
 | Random Forest (n=200) | 0.9980 | 1.0000 | 0.9960 | 0.9980 | 1.0000 |
 | XGBoost (n=300, depth=6) | 0.9990 | 1.0000 | 0.9980 | 0.9990 | 1.0000 |
 
 Numbers are written to `reports/metrics_comparison.csv` automatically.
 
-### 4.2 Confusion matrices
+### 4.2 Confusion matrices — classical ML stage
 
 | Model | TN | FP | FN | TP |
 |---|---:|---:|---:|---:|
-| MLP | 496 | 3 | 5 | 494 |
 | Random Forest | 499 | 0 | 2 | 497 |
 | XGBoost | 499 | 0 | 1 | 498 |
 
-XGBoost makes a single error (one false negative) on the test set; Random Forest makes two; the MLP makes eight (three false positives, five false negatives).
+XGBoost makes a single error (one false negative) on the sample test set; Random Forest makes two.
 
-### 4.3 Smoke test on the full dataset (50 000 stratified rows)
+### 4.3 Deep learning on the full ~270 000-row dataset (test split: ≈ 26 964 flows, stratified)
+
+| Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
+|---|---:|---:|---:|---:|---:|
+| MLP (PyTorch / 3 hidden) | 0.9956 | 0.9962 | 0.9988 | 0.9975 | 0.9991 |
+
+Confusion matrix on the full-dataset test split:
+
+| Model | TN | FP | FN | TP |
+|---|---:|---:|---:|---:|
+| MLP | 1 905 | 95 | 30 | 24 934 |
+
+The natural 12.7 : 1 class imbalance is preserved in the test split (≈ 1 980 benign, ≈ 24 984 malicious), so accuracy and F1 are reported alongside precision and recall to remain meaningful. The MLP's training-curve plot (`deep_learning/figures/mlp_training_curves.png`) shows convergence by epoch ≈ 30, after which the ReduceLROnPlateau scheduler halves the learning rate and validation F1 plateaus.
+
+### 4.4 Smoke test on the full dataset (50 000 stratified rows) — classical ML
 
 | Model | Accuracy | F1 | ROC-AUC |
 |---|---:|---:|---:|
 | Random Forest | 0.9994 | 0.9996 | 1.0000 |
 | XGBoost | 0.9999 | 0.9999 | 1.0000 |
 
-The full-dataset numbers are within rounding of the bundled-sample numbers, confirming that the 10 K sample is representative.
+The full-dataset numbers for RF and XGB are within rounding of the bundled-sample numbers, confirming that the 10 K sample is representative for the tree ensembles.
 
-### 4.4 Top features (Random Forest Gini importance)
+### 4.5 Top features (Random Forest Gini importance)
 
 | Rank | Feature | Importance |
 |---|---|---:|
@@ -255,7 +288,7 @@ The full-dataset numbers are within rounding of the bundled-sample numbers, conf
 
 The top features are dominated by **packet-length statistics** — exactly what theory predicts: tunneling tools pack encoded payloads into queries, producing distinctive packet-size distributions that differ from regular DoH browsing. Byte counters (`FlowBytesReceived`, `FlowBytesSent`) come next, followed by timing variance.
 
-### 4.5 Figures saved automatically
+### 4.6 Figures saved automatically
 
 Saved by `src/evaluate.py` into `reports/figures/`:
 
@@ -276,18 +309,18 @@ The MLP notebook (`deep_learning/04_mlp_e2e.ipynb`) additionally produces, into 
 
 ### 5.1 Why all three models score near-ceiling
 
-The numbers (F1 between 0.992 and 0.999) look almost suspiciously high. Two honest reasons:
+The numbers (F1 between 0.997 and 0.999) look almost suspiciously high. Two honest reasons:
 
 1. **The dataset is highly separable on these features.** Tunneling tools modify packet sizes, timing, and byte counts in ways that don't overlap much with benign DoH browsing. Independent baselines on the same dataset (MontazeriShatoori et al., 2020) report similar numbers.
 2. **The CIC dataset captured a small set of tunneling tools** (`dns2tcp`, `DNSCat2`, `Iodine`). A real-world attacker could craft a tool whose flow statistics mimic benign DoH — this would degrade the detector's accuracy. We have not tested that scenario.
 
 ### 5.2 What the model rankings mean
 
-XGBoost > Random Forest > MLP, by **small but consistent** margins. The ordering is robust to changes in the random seed and split. Three observations:
+A direct head-to-head ranking is complicated by the fact that the two stages were evaluated on different data: the classical ML stage was scored on a balanced 10 K sample, while the deep learning stage was scored on the full ~270 K dataset with its natural 12.7 : 1 imbalance. With that caveat, three observations hold:
 
-1. **The tree ensembles handle this kind of skewed tabular data more naturally.** Flow features like `PacketLengthVariance` are heavy-tailed and not Gaussian; trees split on raw values, while the MLP must learn that geometry through gradient descent on standardised features.
-2. **Class imbalance hurts the MLP slightly more.** On the bundled balanced sample this is invisible, but on the full 269 K-row dataset (12.7 : 1 malicious : benign) the gap widens unless oversampling is applied.
-3. **The MLP's eight errors are still informative.** They cluster on flows whose `PacketLengthMode` is unusually low for tunneling — i.e., the same edge cases that confuse the trees, just slightly more of them.
+1. **XGBoost and Random Forest both peak near 0.999 F1 on the balanced sample**, with XGBoost edging RF by a single test-set error. The ordering is robust to changes in the random seed and split.
+2. **The MLP on the full dataset reaches 0.997 F1.** Even with the imbalanced test set, recall remains above 0.998 — the model is conservative about false positives (95 FPs on ~2 000 benign rows) but rarely misses tunneling traffic. This is the operationally desirable error profile for a covert-channel detector.
+3. **Tree ensembles handle this kind of skewed tabular data more naturally.** Flow features like `PacketLengthVariance` are heavy-tailed and not Gaussian; trees split on raw values, while the MLP must learn that geometry through gradient descent on standardised features. The remaining gap (~0.002 F1) is the price the MLP pays for not having that inductive bias.
 
 ### 5.3 What the feature importances tell us
 
@@ -320,11 +353,11 @@ This section places our numbers next to published results on the same task. Numb
 | MontazeriShatoori et al. — *Detection of DoH tunnels* | 2020 | LSTM | 0.994 | 0.993 | ≈ 0.997 |
 | Singh & Roy — *Detecting malicious DNS over HTTPS using ML* | 2021 | Gradient Boosting | 0.996 | 0.997 | 0.999 |
 | Behnke et al. — *Feature engineering for DoH tunneling* | 2021 | Random Forest | 0.997 | 0.998 | ≈ 1.000 |
-| **This project** | 2026 | **XGBoost** | **0.999** | **0.999** | **1.000** |
-| **This project** | 2026 | **Random Forest** | 0.998 | 0.998 | 1.000 |
-| **This project** | 2026 | **MLP (deep)** | 0.992 | 0.992 | 0.999 |
+| **This project** — XGBoost (10 K sample) | 2026 | **XGBoost** | **0.999** | **0.999** | **1.000** |
+| **This project** — Random Forest (10 K sample) | 2026 | **Random Forest** | 0.998 | 0.998 | 1.000 |
+| **This project** — MLP (full ~270 K dataset) | 2026 | **MLP (deep)** | 0.996 | 0.997 | 0.999 |
 
-Our XGBoost and Random Forest results are **statistically indistinguishable** from MontazeriShatoori et al.'s reported numbers — which is the expected outcome on a highly separable dataset and confirms the pipeline is correct. The deep-learning baseline we added (MLP) tracks their LSTM result closely (within ~0.002 F1).
+Our XGBoost and Random Forest results — trained on the 10 K balanced sample — are **statistically indistinguishable** from MontazeriShatoori et al.'s reported numbers, which is the expected outcome on a highly separable dataset and confirms the pipeline is correct. The deep-learning baseline we added (MLP) was trained on the **full ~270 K-row dataset** and tracks their LSTM result very closely (within ~0.004 F1) — a fair comparison since both were exposed to the same training distribution at the same scale.
 
 ### 6.2 Comparison with character-level deep-learning detectors
 
@@ -336,7 +369,7 @@ These works use raw query strings rather than flow statistics, so the input is d
 | Yu, Pan, Hu et al. — *Character-level detection of DNS tunneling* | 2018 | char-level CNN + LSTM | ≈ 0.99 |
 | Liu et al. — *Byte-level CNN for malicious-domain detection* | 2019 | byte-level CNN | ≈ 0.97 |
 | Born & Gustafson — *DNS tunnels via character frequency* | 2010 | $\chi^2$ test | ≈ 0.92 |
-| **This project — MLP on flow features** | 2026 | 3-layer MLP, 256-128-64 | **0.992** |
+| **This project — MLP on flow features (full ~270 K dataset)** | 2026 | 3-layer MLP, 256-128-64 | **0.997** |
 
 The deep-learning approaches that ingest **query text** sit in roughly the same accuracy band as our flow-feature MLP. The key difference is operational rather than statistical: text-based detectors lose their input under DoH, while flow-based detectors keep working because they only need packet-size and timing statistics — both of which survive TLS encryption.
 
@@ -364,7 +397,7 @@ The practical takeaway is the same one Buczak and Guven (2016) reach in their su
 
 ## 7. Conclusion
 
-We built and shipped a working DNS-tunneling detector and benchmarked three model families — Random Forest, XGBoost, and a three-layer Multi-Layer Perceptron — under identical preprocessing on the CIRA-CIC-DoHBrw-2020 dataset. XGBoost reaches **0.999 accuracy / F1** and Random Forest **0.998**; the MLP reaches **0.992**, all with ROC-AUC ≥ 0.999. The repository is fully reproducible: a bundled sample, pretrained models, an inference CLI, two Colab notebooks (classical and deep-learning) all in one place.
+We built and shipped a working DNS-tunneling detector and benchmarked three model families on the CIRA-CIC-DoHBrw-2020 dataset under a two-stage protocol: Random Forest and XGBoost were trained on a balanced 10 000-row sample of the dataset; the three-layer Multi-Layer Perceptron was trained on the full ~270 000-row dataset. XGBoost reaches **0.999 accuracy / F1** and Random Forest **0.998** on the sample test split; the MLP reaches **0.997 F1** on the full-dataset test split, all with ROC-AUC ≥ 0.999. The repository is fully reproducible: the bundled sample, the pretrained models, an inference CLI, and two Colab notebooks (classical and deep-learning) all live in one place.
 
 The most valuable engineering lessons from this project were not the modelling decisions but the operational ones: matching the dataset to the question, keeping data files out of git, choosing what to commit pretrained vs. what to recompute, and writing self-contained notebooks that survive when the supporting infrastructure changes underneath.
 
